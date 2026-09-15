@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Web3D Sculptor - iPad & PC 3D Modeler</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            touch-action: none; /* Prevents default mobile pinch/zoom behaviors */
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+        /* UI Toolbar Overlay */
+        #toolbar {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background: rgba(30, 30, 30, 0.85);
+            padding: 12px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            z-index: 10;
+            max-width: 220px;
+        }
+        h1 {
+            font-size: 14px;
+            margin: 0 0 5px 0;
+            color: #00ffcc;
+            letter-spacing: 0.5px;
+        }
+        .btn-group {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+        }
+        button {
+            background: #333;
+            color: white;
+            border: 1px solid #555;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+            flex: 1;
+            min-width: 70px;
+        }
+        button:hover {
+            background: #00ffcc;
+            color: black;
+            border-color: #00ffcc;
+        }
+        button.active {
+            background: #00ffcc;
+            color: black;
+            border-color: #00ffcc;
+            font-weight: bold;
+        }
+        .section-label {
+            font-size: 11px;
+            color: #aaa;
+            margin-top: 5px;
+            margin-bottom: 2px;
+        }
+        input[type="color"] {
+            -webkit-appearance: none;
+            border: none;
+            width: 100%;
+            height: 30px;
+            border-radius: 6px;
+            cursor: pointer;
+            background: none;
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+        input[type="color"]::-webkit-color-swatch { border: 1px solid #555; border-radius: 6px; }
+        
+        #instructions {
+            position: absolute;
+            bottom: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.7);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 11px;
+            pointer-events: none;
+            text-align: center;
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="toolbar">
+        <h1>Web3D Sculptor</h1>
+        
+        <div class="section-label">Add Primitive</div>
+        <div class="btn-group">
+            <button onclick="addShape('box')">Cube</button>
+            <button onclick="addShape('sphere')">Sphere</button>
+        </div>
+        <div class="btn-group">
+            <button onclick="addShape('cylinder')">Cylinder</button>
+            <button onclick="addShape('cone')">Cone</button>
+        </div>
+
+        <div class="section-label">Tools</div>
+        <div class="btn-group">
+            <button id="btn-select" class="active" onclick="setMode('select')">Select</button>
+            <button id="btn-rotate" onclick="setMode('rotate')">Rotate</button>
+        </div>
+        <div class="btn-group">
+            <button onclick="scaleSelected(1.2)">Scale +</button>
+            <button onclick="scaleSelected(0.8)">Scale -</button>
+        </div>
+
+        <div class="section-label">Color</div>
+        <input type="color" id="colorPicker" value="#ff0055" onchange="changeColor(this.value)">
+
+        <div class="section-label">Actions</div>
+        <div class="btn-group">
+            <button style="background:#822;" onclick="deleteSelected()">Delete</button>
+            <button style="background:#262;" onclick="exportOBJ()">Export OBJ</button>
+        </div>
+    </div>
+
+    <div id="instructions">
+        <b>PC:</b> Click to Select/Rotate | Drag background to orbit. <br>
+        <b>iPad/Touch:</b> Tap to Select | One finger drag to orbit.
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <!-- Include Three.js and addons from reliable CDNs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/OBJExporter.js"></script>
+
+    <script>
+        let scene, camera, renderer, controls;
+        let objects = [];
+        let selectedObject = null;
+        let mode = 'select'; // 'select' or 'rotate'
+        let raycaster = new THREE.Raycaster();
+        let mouse = new THREE.Vector2();
+
+        init();
+        animate();
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            // Scene setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a1a);
+            scene.fog = new THREE.FogExp2(0x1a1a1a, 0.03);
+
+            // Camera setup
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(6, 6, 8);
+
+            // Renderer setup
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            // Orbit Controls (works seamlessly with mouse and iPad touch gestures)
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(10, 20, 15);
+            scene.add(dirLight);
+
+            // Ground Grid
+            const grid = new THREE.GridHelper(20, 20, 0x00ffcc, 0x444444);
+            grid.position.y = -1;
+            scene.add(grid);
+
+            // Add starting object
+            addShape('box');
+
+            // Event Listeners for interaction
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('pointerdown', onPointerDown, false);
+
+            // Prevent unwanted touch gestures from scrolling the page on mobile/iPad
+            document.body.addEventListener('touchmove', (e) => { e.preventDefault(); }, { passive: false });
+        }
+
+        function addShape(type) {
+            let geometry;
+            switch(type) {
+                case 'box': geometry = new THREE.BoxGeometry(1.5, 1.5, 1.5); break;
+                case 'sphere': geometry = new THREE.SphereGeometry(1, 32, 32); break;
+                case 'cylinder': geometry = new THREE.CylinderGeometry(0.8, 0.8, 2, 32); break;
+                case 'cone': geometry = new THREE.ConeGeometry(1, 2, 32); break;
+            }
+
+            const material = new THREE.MeshStandardMaterial({ 
+                color: document.getElementById('colorPicker').value,
+                roughness: 0.3,
+                metalness: 0.2
+            });
+
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(0, 0, 0);
+            scene.add(mesh);
+            objects.push(mesh);
+            selectObject(mesh);
+        }
+
+        function setMode(newMode) {
+            mode = newMode;
+            document.getElementById('btn-select').classList.remove('active');
+            document.getElementById('btn-rotate').classList.remove('active');
+            document.getElementById(`btn-${newMode}`).classList.add('active');
+
+            // If rotate mode is active, disable orbit controls temporarily so user can rotate the object instead of the camera
+            if (mode === 'rotate') {
+                controls.enabled = false;
+            } else {
+                controls.enabled = true;
+            }
+        }
+
+        let isDraggingObject = false;
+        let previousMousePosition = { x: 0, y: 0 };
+
+        function onPointerDown(event) {
+            // Calculate normalized device coordinates (-1 to +1) for raycasting
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(objects);
+
+            if (intersects.length > 0) {
+                const clickedMesh = intersects[0].object;
+                selectObject(clickedMesh);
+
+                if (mode === 'rotate') {
+                    isDraggingObject = true;
+                    previousMousePosition = { x: event.clientX, y: event.clientY };
+                }
+            } else {
+                // Clicked empty space
+                if (mode === 'rotate') {
+                    isDraggingObject = false;
+                }
+            }
+        }
+
+        window.addEventListener('pointermove', (event) => {
+            if (isDraggingObject && selectedObject && mode === 'rotate') {
+                const deltaX = event.clientX - previousMousePosition.x;
+                const deltaY = event.clientY - previousMousePosition.y;
+
+                selectedObject.rotation.y += deltaX * 0.01;
+                selectedObject.rotation.x += deltaY * 0.01;
+
+                previousMousePosition = { x: event.clientX, y: event.clientY };
+            }
+        });
+
+        window.addEventListener('pointerup', () => {
+            isDraggingObject = false;
+        });
+
+        function selectObject(mesh) {
+            // Reset previous selection outline effect (optional basic color shift indication)
+            objects.forEach(obj => {
+                if(obj !== selectedObject) obj.material.emissive?.setHex(0x000000);
+            });
+            selectedObject = mesh;
+            if (selectedObject.material.emissive) {
+                selectedObject.material.emissive.setHex(0x333333);
+            }
+            // Sync color picker with selected object
+            document.getElementById('colorPicker').value = '#' + selectedObject.material.color.getHexString();
+        }
+
+        function changeColor(hex) {
+            if (selectedObject) {
+                selectedObject.material.color.set(hex);
+            }
+        }
+
+        function scaleSelected(factor) {
+            if (selectedObject) {
+                selectedObject.scale.multiplyScalar(factor);
+            }
+        }
+
+        function deleteSelected() {
+            if (selectedObject) {
+                scene.remove(selectedObject);
+                objects = objects.filter(obj => obj !== selectedObject);
+                selectedObject.geometry.dispose();
+                selectedObject.material.dispose();
+                selectedObject = null;
+            }
+        }
+
+        function exportOBJ() {
+            if(objects.length === 0) {
+                alert("No models to export!");
+                return;
+            }
+            const exporter = new THREE.OBJExporter();
+            const result = exporter.parse(scene);
+            
+            // Create a downloadable blob link compatible with both PC and iPad files app
+            const blob = new Blob([result], { type: 'text/plain' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'model.obj';
+            link.click();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
